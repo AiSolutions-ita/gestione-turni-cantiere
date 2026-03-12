@@ -19,7 +19,22 @@ for i in range(len(usernames)):
 
 authenticator = stauth.Authenticate(auth_data, "cookie_cantiere", "key_cantiere", cookie_expiry_days=1)
 
-name, authentication_status, username = authenticator.login('Login', 'main')
+# --- LOGICA DI LOGIN AGGIORNATA ---
+# Rimuoviamo 'Login' e lasciamo solo la posizione 'main'
+authentication_status = authenticator.login(location='main')
+
+if st.session_state["authentication_status"] == False:
+    st.error('Username o Password errati')
+elif st.session_state["authentication_status"] == None:
+    st.warning('Inserisci le credenziali per accedere')
+else:
+    # Recuperiamo il nome dell'utente loggato dalla sessione
+    name = st.session_state["name"]
+    # --- INIZIO AREA PROTETTA ---
+    st.sidebar.title(f"Benvenuto {name}")
+    authenticator.logout('Logout', 'sidebar')
+    
+    # ... resto del codice indentato ...
 
 if authentication_status == False:
     st.error('Username o Password errati')
@@ -125,3 +140,4 @@ else:
             st.bar_chart(pd.Series(ore))
         else:
             st.error("❌ Soluzione non trovata. Controlla le abilitazioni.")
+

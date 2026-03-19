@@ -27,7 +27,7 @@ if st.session_state["authentication_status"] == False:
 elif st.session_state["authentication_status"] == None:
     st.warning('Per favore, effettua il login per visualizzare i dati')
 elif st.session_state["authentication_status"]:
-    # --- INIZIO AREA PROTETTA (Tutto indentato qui sotto) ---
+    # --- INIZIO AREA PROTETTA ---
     st.sidebar.title(f"Benvenuto {st.session_state['name']}")
     authenticator.logout('Logout', 'sidebar')
     
@@ -125,5 +125,32 @@ elif st.session_state["authentication_status"]:
             st.subheader("📊 Analisi Carico Ore")
             ore = {df_p.iloc[d]["ID"]: sum(solver.Value(x[d, g, t])*8 for g in range(1, num_giorni+1) for t in range(3)) for d in range(num_d)}
             st.bar_chart(pd.Series(ore))
+
+            # --- PARTE NUOVA: ASSISTENTE STRATEGICO E ALERT STRAORDINARI ---
+            st.subheader("💡 Analisi Strategica Straordinari")
+            overtime_staff = {nome: h for nome, h in ore.items() if h > 160}
+            
+            if overtime_staff:
+                tot_extra = sum(h - 160 for h in overtime_staff.values())
+                st.warning(f"⚠️ **Attenzione:** Rilevate {tot_extra} ore di straordinario totali.")
+                
+                # Calcolo mancanze specifiche
+                suggerimenti = []
+                for ab in ["AB1", "AB2", "AB3"]:
+                    count_abilitati = df_p[ab].sum()
+                    necessita = df_req[df_req[f"Richiede {ab}"] == True]["Personale Richiesto"].sum()
+                    
+                    if necessita > 0 and count_abilitati < 3: # Se l'abilitazione serve ma ci sono poche persone
+                        riduzione = min(tot_extra, 40) 
+                        suggerimenti.append(f"🆘 Mancanza di personale **{ab}**: aggiungendo 1 unità con questa abilitazione, ridurresti lo straordinario di circa **{riduzione} ore**.")
+                
+                if suggerimenti:
+                    for s in suggerimenti:
+                        st.info(s)
+                else:
+                    st.info("📢 Il sovraccarico è dovuto a una mancanza numerica generale di operai. Aggiungi 1-2 risorse generiche per azzerare lo straordinario.")
+            else:
+                st.success("✅ Nessun operatore supera le 160 ore. La distribuzione è ottimale.")
+
         else:
             st.error("❌ Soluzione non trovata. Controlla le abilitazioni.")

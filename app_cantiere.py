@@ -41,7 +41,7 @@ elif st.session_state["authentication_status"]:
                 nomi = ["Gennaro Spada", "Michele Russo", "Tizio", "Caio", "Sempronio", "Bello"] + [f"Op {i:02d}" for i in range(7, 21)]
                 default_data = [{"ID": n, "AB1": False, "AB2": False, "AB3": False, "Giorni Assenza": ""} for n in nomi]
                 st.session_state.df_personale = pd.DataFrame(default_data)
-            df_p = st.data_editor(st.session_state.df_personale, num_rows="dynamic", use_container_width=True)
+            df_p = st.data_editor(st.session_state.df_personale, num_rows="dynamic", key="editor_p", use_container_width=True)
         with col2:
             st.subheader("📅 Periodo")
             anno = 2026
@@ -64,6 +64,7 @@ elif st.session_state["authentication_status"]:
         x = {}
         lavora = {}
         supera_soglia = {}
+        # Pulizia assenze
         assenze_dict = {idx: [int(g.strip()) for g in str(row["Giorni Assenza"]).split(",") if g.strip().isdigit()] for idx, row in df_p.iterrows()}
 
         for d in range(num_d):
@@ -77,6 +78,7 @@ elif st.session_state["authentication_status"]:
         for d in range(num_d):
             num_turni = sum(x[d, g, t] for g in range(1, num_giorni + 1) for t in range(3))
             model.Add(num_turni <= 20).OnlyEnforceIf(supera_soglia[d].Not())
+        
         model.Minimize(sum(supera_soglia[d] * 100 for d in range(num_d)) + sum(lavora[d] * 10 for d in range(num_d)))
 
         for g in range(1, num_giorni + 1):
@@ -103,6 +105,30 @@ elif st.session_state["authentication_status"]:
         status = solver.Solve(model)
 
         if status in [cp_model.OPTIMAL, cp_model.FEASIBLE]:
+            # --- CALCOLO CONFIGURAZIONE IDEALE ---
+            total_slots_needed = df_req["Personale Richiesto"].sum() * num_giorni
+            ideal_total_staff = -(-total_slots_needed // 20) # Arrotondamento per eccesso
+            
+            ideal_ab = {}
+            for ab in ["AB1", "AB2", "AB3"]:
+                if df_req[df_req[f"Richiede {ab}"] == True]["Personale Richiesto"].any():
+                    # Servono almeno 3 persone per coprire i turni a rotazione h24/7 senza straordinari
+                    ideal_ab[ab] = 3 
+                else:
+                    ideal_ab[ab] = 0
+
+            # Messaggio di Benvenuto/Configurazione Ideale
+            msg_ideale = f"👋 **Analisi di Cantiere Completata!**\n\n"
+            msg_ideale += f"Per questi vincoli, l'ideale è inserire in organico un totale di **{ideal_total_staff} risorse** "
+            dettagli_ab = [f"**{val} con {key}**" for key, val in ideal_ab.items() if val > 0]
+            if dettagli_ab:
+                msg_ideale += f"(di cui almeno {', '.join(dettagli_ab)}). "
+            
+            msg_ideale += "\n\n**Questa è la configurazione ideale per mantenere tutto il personale a 160 ore mensili SENZA prevedere costi di straordinario!**"
+            
+            st.info(msg_ideale)
+
+            # --- VISUALIZZAZIONE RISULTATI ---
             st.subheader("📅 Calendario Turni Mensile")
             results_web, results_csv = [], []
             for g in range(1, num_giorni + 1):
@@ -117,40 +143,22 @@ elif st.session_state["authentication_status"]:
                 results_csv.append(row_csv)
             
             st.table(pd.DataFrame(results_web))
-            csv_buffer = io.StringIO()
-            pd.DataFrame(results_csv).to_csv(csv_buffer, index=False, sep=";", encoding="utf-8-sig")
-            st.download_button("📥 Scarica CSV per Excel", csv_buffer.getvalue(), f"Turni_{mese_n}.csv", "text/csv")
             
+            # --- ANALISI ORE ---
             st.divider()
             st.subheader("📊 Analisi Carico Ore")
             ore = {df_p.iloc[d]["ID"]: sum(solver.Value(x[d, g, t])*8 for g in range(1, num_giorni+1) for t in range(3)) for d in range(num_d)}
             st.bar_chart(pd.Series(ore))
 
-            # --- PARTE NUOVA: ASSISTENTE STRATEGICO E ALERT STRAORDINARI ---
-            st.subheader("💡 Analisi Strategica Straordinari")
+            # Alert Straordinari (se la configurazione attuale non è quella ideale)
             overtime_staff = {nome: h for nome, h in ore.items() if h > 160}
-            
             if overtime_staff:
-                tot_extra = sum(h - 160 for h in overtime_staff.values())
-                st.warning(f"⚠️ **Attenzione:** Rilevate {tot_extra} ore di straordinario totali.")
-                
-                # Calcolo mancanze specifiche
-                suggerimenti = []
-                for ab in ["AB1", "AB2", "AB3"]:
-                    count_abilitati = df_p[ab].sum()
-                    necessita = df_req[df_req[f"Richiede {ab}"] == True]["Personale Richiesto"].sum()
-                    
-                    if necessita > 0 and count_abilitati < 3: # Se l'abilitazione serve ma ci sono poche persone
-                        riduzione = min(tot_extra, 40) 
-                        suggerimenti.append(f"🆘 Mancanza di personale **{ab}**: aggiungendo 1 unità con questa abilitazione, ridurresti lo straordinario di circa **{riduzione} ore**.")
-                
-                if suggerimenti:
-                    for s in suggerimenti:
-                        st.info(s)
-                else:
-                    st.info("📢 Il sovraccarico è dovuto a una mancanza numerica generale di operai. Aggiungi 1-2 risorse generiche per azzerare lo straordinario.")
-            else:
-                st.success("✅ Nessun operatore supera le 160 ore. La distribuzione è ottimale.")
-
+                st.warning(f"⚠️ Attualmente hai **{sum(h-160 for h in overtime_staff.values())} ore** di straordinario. Confronta con la 'Configurazione Ideale' sopra!")
+            
+            # Download
+            csv_buffer = io.StringIO()
+            pd.DataFrame(results_csv).to_csv(csv_buffer, index=False, sep=";", encoding="utf-8-sig")
+            st.download_button("📥 Scarica CSV per Excel", csv_buffer.getvalue(), f"Turni_{mese_n}.csv", "text/csv")
+            
         else:
-            st.error("❌ Soluzione non trovata. Controlla le abilitazioni.")
+            st.error("❌ Soluzione non trovata. I vincoli sono troppo stretti per il personale attuale.")
